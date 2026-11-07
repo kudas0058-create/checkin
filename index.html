@@ -8,7 +8,7 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   *{box-sizing:border-box}
-  body{font-family:system-ui,'Noto Sans Lao','Noto Sans Thai',sans-serif;margin:0;background:#f4f5f7;color:#222}
+  body{font-family:system-ui,'Noto Sans Lao','Noto Sans Thai',sans-serif;margin:0;min-height:100vh;background:linear-gradient(160deg,#fdfdff 0%,#eaf0fb 55%,#dbe8f9 100%) fixed;color:#222}
   .wrap{max-width:520px;margin:0 auto;padding:12px}
   .card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px}
   h2{margin:0 0 8px}
@@ -31,21 +31,33 @@
   #log .row{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:6px;color:#fff;font-size:15px;background:#888}
   #log .row.pending{background:#999}
   ul{margin:6px 0;padding-left:20px}
+
+  /* ===== ໜ້າຕັ້ງຄ່າ (ແບບ glass + ວົງມົນສີຟ້າ) ===== */
+  .setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:36px 20px 28px}
+  .setup::before{content:"";position:fixed;left:-110px;bottom:-110px;width:300px;height:300px;border-radius:50%;background:linear-gradient(135deg,#3b7be8,#2a62c9);box-shadow:0 10px 30px rgba(42,98,201,.35);z-index:-1}
+  .ttl{font-size:clamp(28px,8.5vw,44px);font-weight:800;text-align:center;margin:40px 0 28px;color:#000;text-shadow:0 4px 10px rgba(0,0,0,.18);line-height:1.25}
+  .setup .card{width:100%;max-width:420px;background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-radius:36px;padding:34px 26px 30px;box-shadow:0 10px 40px rgba(60,90,160,.12)}
+  .setup label{font-size:18px;font-weight:400;margin:14px 0 6px}
+  .setup input{border:3px solid #000;border-radius:14px;background:rgba(255,255,255,.6);padding:12px}
+  .setup button{display:block;width:auto;min-width:170px;margin:26px auto 0;padding:14px 30px;background:rgba(240,245,255,.92);color:#000;font-size:20px;border:1px solid #cfd8ea;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+  .setup .err{text-align:center}
+  .note{margin-top:auto;padding-top:40px;text-align:center;font-size:16px;color:#000}
+  .note u{display:inline-block;margin-bottom:6px}
 </style>
 </head>
 <body>
 
-<div id="setup" class="wrap">
+<div id="setup" class="wrap setup">
+  <h1 class="ttl">ລະບົບສະແກນເຂົ້າຮຽນ</h1>
   <div class="card">
-    <h2>ສະແກນເຊັກຊື່ (ຕໍ່ເນື່ອງ)</h2>
-    <label>ລິ້ງເວັບແອັບ (ລົງທ້າຍດ້ວຍ /exec)</label>
+    <label>ປ້ອນລິ້ງ</label>
     <input id="url" placeholder="https://script.google.com/macros/s/.../exec">
-    <label>PIN ຫົວໜ້າຫ້ອງ</label>
+    <label>ລະຫັດ PIN ຂອງຄະນະຫ້ອງ</label>
     <input id="pin" type="password" inputmode="numeric" placeholder="PIN">
     <button id="start">ເລີ່ມສະແກນ</button>
     <div id="msg" class="err"></div>
   </div>
-  <div class="card" style="font-size:14px;color:#555">ຂໍ້ມູນນີ້ຈະຖືກຈື່ໄວ້ໃນມືຖືເຄື່ອງນີ້ເທົ່ານັ້ນ ຄັ້ງຕໍ່ໄປກົດເລີ່ມສະແກນໄດ້ເລີຍ</div>
+  <div class="note"><u>ໝາຍເຫດ</u><br>ລະບົບສະແກນນີ້ໃຊ້ໄດ້ສະເພາະຄະນະຫ້ອງເທົ່ານັ້ນ</div>
 </div>
 
 <div id="scan" class="wrap hidden">
