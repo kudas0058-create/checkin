@@ -1,634 +1,486 @@
-// ระบบเช็คชื่อด้วย QR code แยกตามคาบเรียน (Google Apps Script + Google Sheets)
-// QR แต่ละคนคือ URL ของเว็บแอปนี้ต่อท้ายด้วย ?code=รหัสนักเรียน
-// ระบบดูวัน/เวลาปัจจุบัน แล้วเทียบกับชีต "ตารางเรียน" เพื่อรู้ว่าตอนนี้คาบไหน
-// ต้องใส่ PIN ของหัวหน้าห้องก่อน ระบบถึงจะบันทึกหรือแสดงสรุป
-
-const PIN = '482913'; // ใช้เฉพาะหน้าเว็บแบบเก่า (?code=) แอปหัวหน้าห้องใหม่ไม่ใช้ PIN แล้ว
-// รหัสนักเรียนของหัวหน้าห้อง (ผู้ที่มีสิทธิ์สแกนและอนุมัติลา) <<< แก้ให้ตรงกับหัวหน้าห้องของคุณ
-// ล็อกอินด้วย "รหัสนักเรียน" + "รหัสผ่านส่วนตัว" (คอลัมน์ C ของแท็บนักเรียน)
-const LEADERS = ['670028', '670015', '670005'];
-
-const SHEET_STUDENTS = 'นักเรียน';   // คอลัมน์ A = รหัส, B = ชื่อ
-const SHEET_TT = 'ตารางเรียน';       // วัน | เริ่ม | จบ | วิชา | ห้อง
-const SHEET_LOG = 'บันทึกคาบ';       // เวลา | วันที่ | คาบ | วิชา | รหัส | ชื่อ
-const TZ = 'Asia/Vientiane';
-const EARLY_MIN = 15; // สแกนก่อนคาบเริ่มได้กี่นาที
-const LATE_MIN = 10;  // สแกนหลังคาบจบได้กี่นาที
-const SHEET_LEAVE = 'คำขอลา';        // id | ส่งเมื่อ | รหัส | ชื่อ | ประเภท | จากวันที่ | ถึงวันที่ | เหตุผล | สถานะ | หมายเหตุ | พิจารณาเมื่อ
-const MAX_ABSENT_PCT = 20; // เกณฑ์ขาดเรียนสูงสุด (%) ที่แสดงในแอปนักเรียน (ปรับตามเกณฑ์จริงของโรงเรียน)
-
-// รันฟังก์ชันนี้ 1 ครั้ง เพื่อสร้างชีตที่ยังไม่มี (ไม่ลบของเดิม)
-function setup() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  if (!ss.getSheetByName(SHEET_STUDENTS)) {
-    const s = ss.insertSheet(SHEET_STUDENTS);
-    s.getRange('A:A').setNumberFormat('@');
-    s.appendRow(['รหัส', 'ชื่อ']);
-    s.appendRow(['S001', 'ตัวอย่าง นักเรียนหนึ่ง']);
-    s.appendRow(['S002', 'ตัวอย่าง นักเรียนสอง']);
-  }
-
-  if (!ss.getSheetByName(SHEET_TT)) {
-    const t = ss.insertSheet(SHEET_TT);
-    t.getRange('B:C').setNumberFormat('@'); // เก็บเวลาเป็นข้อความ เช่น 08:00
-    const rows = [
-      ['วัน (1=จันทร์ ... 5=ศุกร์)', 'เริ่ม', 'จบ', 'วิชา', 'ห้อง'],
-      [1, '08:00', '09:30', 'English 1', 'B2'],
-      [1, '11:45', '13:15', 'Computer', 'COM 1'],
-      [1, '15:00', '16:30', 'Statistics (T)', 'EBL 4.1'],
-      [2, '08:00', '09:30', 'ຫຼັກເສດຖະສາດ (L)', 'M5'],
-      [2, '13:00', '14:30', 'ລາວສຶກສາ', 'LH'],
-      [3, '08:00', '09:30', 'Computer (L)', 'AV'],
-      [4, '11:45', '13:15', 'Statistics (L)', 'EBLH'],
-      [4, '13:00', '14:30', 'ຄະນິດສາດ ເສດຖະສາດ', 'EBL 4.3'],
-      [5, '08:00', '09:30', 'ຈິດຕະວິທະຍາທົ່ວໄປ', 'LH'],
-      [5, '13:00', '14:30', 'ຫຼັກເສດຖະສາດ (L)', 'EBL 4.2']
-    ];
-    t.getRange(1, 1, rows.length, 5).setValues(rows);
-    t.setColumnWidth(1, 180);
-    t.setColumnWidth(4, 200);
-  }
-
-  if (!ss.getSheetByName(SHEET_LOG)) {
-    const l = ss.insertSheet(SHEET_LOG);
-    l.getRange('B:C').setNumberFormat('@'); // วันที่และคาบ เก็บเป็นข้อความ
-    l.appendRow(['เวลา', 'วันที่', 'คาบ', 'วิชา', 'รหัส', 'ชื่อ']);
-  }
-
-  // แท็บนักเรียน: คอลัมน์ C = รหัสผ่านส่วนตัว (ใช้ล็อกอินในแอปนักเรียน)
-  const st = ss.getSheetByName(SHEET_STUDENTS);
-  if (st) {
-    st.getRange('C:C').setNumberFormat('@');
-    if (!String(st.getRange('C1').getValue()).trim()) st.getRange('C1').setValue('รหัสผ่าน');
-  }
-
-  // แท็บคำขอลา
-  if (!ss.getSheetByName(SHEET_LEAVE)) {
-    const v = ss.insertSheet(SHEET_LEAVE);
-    v.getRange('A:K').setNumberFormat('@');
-    v.appendRow(['id', 'ส่งเมื่อ', 'รหัส', 'ชื่อ', 'ประเภท', 'จากวันที่', 'ถึงวันที่', 'เหตุผล', 'สถานะ (pending/approved/rejected)', 'หมายเหตุผู้พิจารณา', 'พิจารณาเมื่อ']);
-  }
-}
-
-// ---------- เวลาและตารางเรียน ----------
-function now_() {
-  const d = new Date();
-  return {
-    day: Number(Utilities.formatDate(d, TZ, 'u')), // 1=จันทร์ ... 7=อาทิตย์
-    min: Number(Utilities.formatDate(d, TZ, 'H')) * 60 + Number(Utilities.formatDate(d, TZ, 'm')),
-    date: Utilities.formatDate(d, TZ, 'yyyy-MM-dd')
-  };
-}
-
-function toMin_(s) {
-  const m = String(s).trim().match(/^(\d{1,2})[:.](\d{2})/);
-  return m ? Number(m[1]) * 60 + Number(m[2]) : NaN;
-}
-
-function fmt_(min) {
-  const h = Math.floor(min / 60), m = min % 60;
-  return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
-}
-
-// คาบทั้งหมดของวันนั้น เรียงตามเวลาเริ่ม
-function getPeriods_(day) {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_TT);
-  return sh.getDataRange().getDisplayValues().slice(1)
-    .filter(r => String(r[0]).trim() === String(day))
-    .map(r => {
-      const start = toMin_(r[1]), end = toMin_(r[2]);
-      return { start: start, end: end, label: fmt_(start) + '-' + fmt_(end), subject: String(r[3]), room: String(r[4]) };
-    })
-    .filter(p => !isNaN(p.start) && !isNaN(p.end))
-    .sort((a, b) => a.start - b.start);
-}
-
-// คาบที่กำลังเรียน (ถ้าเวลาซ้อนกัน เลือกคาบที่เริ่มทีหลัง)
-function findCurrent_(n) {
-  const c = getPeriods_(n.day).filter(p => n.min >= p.start - EARLY_MIN && n.min <= p.end + LATE_MIN);
-  if (!c.length) return null;
-  c.sort((a, b) => b.start - a.start);
-  return c[0];
-}
-
-// ---------- หน้าเว็บ ----------
-// ---------- API แบบ JSON สำหรับหน้าสแกนต่อเนื่อง (index.html) ----------
-function json_(o) {
-  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
-}
-
-function handleApi_(p) {
-  try {
-    // ----- แอปนักเรียน -----
-    if (p.api === 'me') return apiMe(p.code, p.pass);
-    if (p.api === 'leavePreview') return apiLeavePreview(p.code, p.pass, p.from, p.to);
-    if (p.api === 'leaveSubmit') return apiLeaveSubmit(p);
-    // ----- แอปหัวหน้าห้อง: ล็อกอินด้วยรหัส + รหัสผ่าน แล้วใช้ token -----
-    if (p.api === 'leaderLogin') return apiLeaderLogin(p.code, p.pass);
-    const who = leaderFromToken_(p.token);
-    if (!who) return { status: 'badtoken' };
-    if (p.api === 'checkin') return checkIn_(String(p.code || '').trim());
-    if (p.api === 'summary') return summary_(p.idx);
-    if (p.api === 'leaveList') return leaveList_();
-    if (p.api === 'leaveDecide') return leaveDecide_(p.id, p.decision, p.note);
-    return { status: 'error' };
-  } catch (err) {
-    return { status: 'error', message: String(err) };
-  }
-}
-
-// ----- ล็อกอินหัวหน้าห้อง -----
-function apiLeaderLogin(code, pass) {
-  code = String(code || '').trim();
-  if (LEADERS.indexOf(code) < 0) {
-    // นับความพยายามผิดเหมือนกัน กันเดารหัส
-    auth_(code, pass);
-    return { status: 'badlogin' };
-  }
-  const a = auth_(code, pass);
-  if (a.status !== 'ok') return a;
-  const token = Utilities.getUuid();
-  CacheService.getScriptCache().put('ltok_' + token, code, 21600); // 6 ชั่วโมง
-  return { status: 'ok', token: token, code: code, name: a.name, roster: roster_() };
-}
-
-function leaderFromToken_(token) {
-  token = String(token || '');
-  if (!token) return '';
-  const code = CacheService.getScriptCache().get('ltok_' + token) || '';
-  return LEADERS.indexOf(code) >= 0 ? code : '';
-}
-
-// รายชื่อนักเรียน [[รหัส, ชื่อ], ...] (แคช 10 นาที ให้สแกนเร็ว)
-function roster_() {
-  const cache = CacheService.getScriptCache();
-  const hit = cache.get('roster');
-  if (hit) { try { return JSON.parse(hit); } catch (e) {} }
-  const list = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_STUDENTS).getDataRange().getDisplayValues().slice(1)
-    .filter(r => String(r[0]).trim() !== '')
-    .map(r => [String(r[0]).trim(), String(r[1])]);
-  try { cache.put('roster', JSON.stringify(list), 600); } catch (e) {}
-  return list;
-}
-
-function doGet(e) {
-  const p = (e && e.parameter) || {};
-  if (p.api) return json_(handleApi_(p));
-  const code = JSON.stringify(String(p.code || '').trim()).replace(/</g, '\\u003c');
-  return HtmlService.createHtmlOutput(PAGE_.replace('__CODE__', code))
-    .setTitle('เช็คชื่อ QR')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-}
-
-// ---------- ฟังก์ชันที่หน้าเว็บเรียก (ตรวจ PIN ทุกครั้ง) ----------
-function apiCheckIn(code, pin) {
-  if (String(pin) !== PIN) return { status: 'badpin' };
-  return checkIn_(String(code).trim());
-}
-
-function apiSummary(pin, idx) {
-  if (String(pin) !== PIN) return { status: 'badpin' };
-  return summary_(idx);
-}
-
-function summary_(idx) {
-  const n = now_();
-  const list = getPeriods_(n.day);
-  if (!list.length) return { status: 'ok', day: n.date, periods: [], idx: 0, here: [], absent: [] };
-
-  let i = Number(idx);
-  if (isNaN(i) || i < 0 || i >= list.length) {
-    const cur = findCurrent_(n);
-    if (cur) {
-      i = list.findIndex(p => p.label === cur.label);
-    } else {
-      i = 0;
-      list.forEach((p, k) => { if (p.start <= n.min) i = k; }); // คาบล่าสุดที่เริ่มไปแล้ว
-    }
-  }
-  const s = getSummary_(n.date, list[i]);
-  const plain = a => a.map(r => [String(r[0]), String(r[1])]);
-  return {
-    status: 'ok', day: n.date, idx: i,
-    periods: list.map(p => p.label + '  ' + p.subject),
-    here: plain(s.here), absent: plain(s.absent)
-  };
-}
-
-// ใช้ล็อกกันกรณีมีหลายคนสแกนพร้อมกัน ไม่ให้บันทึกซ้อนหรือซ้ำ
-function checkIn_(code) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(25000);
-  } catch (err) {
-    return { status: 'busy' };
-  }
-  try {
-    return checkInInner_(code);
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function checkInInner_(code) {
-  const n = now_();
-  const per = findCurrent_(n);
-  if (!per) return { status: 'noclass' };
-
-  const st = roster_().find(r => r[0] === code);
-  if (!st) return { status: 'unknown', code: code };
-
-  const info = { code: code, name: String(st[1]), subject: per.subject, label: per.label, room: per.room };
-  const log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LOG);
-  // อ่านเฉพาะ 400 แถวท้ายสุด (คาบวันนี้อยู่ท้ายชีตเสมอ) ทำให้ไม่ช้าลงเมื่อข้อมูลเยอะ
-  const last = log.getLastRow();
-  if (last >= 2) {
-    const start = Math.max(2, last - 399);
-    const rows = log.getRange(start, 1, last - start + 1, 6).getDisplayValues();
-    if (rows.some(r => r[1] === n.date && r[2] === per.label && r[4] === code)) { info.status = 'dup'; return info; }
-  }
-
-  log.appendRow([new Date(), n.date, per.label, per.subject, code, st[1]]);
-  info.status = 'ok';
-  return info;
-}
-
-function getSummary_(date, per) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const students = ss.getSheetByName(SHEET_STUDENTS).getDataRange().getDisplayValues().slice(1)
-    .filter(r => String(r[0]).trim() !== '');
-  const present = new Set(
-    ss.getSheetByName(SHEET_LOG).getDataRange().getDisplayValues().slice(1)
-      .filter(r => r[1] === date && r[2] === per.label).map(r => r[4])
-  );
-  const here = [], absent = [];
-  students.forEach(r => (present.has(String(r[0]).trim()) ? here : absent).push(r));
-  return { here: here, absent: absent };
-}
-
-// =====================================================================
-// แอปนักเรียน: ล็อกอิน + สถิติการมาเรียน + ขอลา
-// =====================================================================
-const LEAVE_TYPES = { sick: 'ລາປ່ວຍ', family: 'ວຽກຄອບຄົວ', school: 'ກິດຈະກຳໂຮງຮຽນ', other: 'ອື່ນໆ' };
-
-// รันฟังก์ชันนี้ 1 ครั้ง เพื่อสร้างรหัสผ่านส่วนตัว 6 หลักให้นักเรียนที่ยังไม่มี
-// (ผลอยู่ที่คอลัมน์ C ของแท็บ "นักเรียน" ใช้แจกให้นักเรียนแต่ละคน)
-function generatePasscodes() {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_STUDENTS);
-  const last = sh.getLastRow();
-  if (last < 2) return;
-  sh.getRange('C:C').setNumberFormat('@');
-  sh.getRange('C1').setValue('รหัสผ่าน');
-  const vals = sh.getRange(2, 1, last - 1, 3).getDisplayValues();
-  const out = vals.map(r => [String(r[0]).trim() && !String(r[2]).trim() ? randomCode_() : String(r[2])]);
-  sh.getRange(2, 3, last - 1, 1).setValues(out);
-}
-
-function randomCode_() {
-  let s = '';
-  for (let i = 0; i < 6; i++) s += Math.floor(Math.random() * 10);
-  return s;
-}
-
-// ----- วันที่ (ใช้ UTC ล้วน ไม่ขึ้นกับเขตเวลาของสคริปต์) -----
-function parseYmd_(s) {
-  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
-}
-function dayOfWeek_(ymd) { // 1=จันทร์ ... 7=อาทิตย์
-  const p = parseYmd_(ymd);
-  if (!p) return 0;
-  const d = new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay();
-  return d === 0 ? 7 : d;
-}
-function addDays_(ymd, n) {
-  const p = parseYmd_(ymd);
-  return Utilities.formatDate(new Date(Date.UTC(p.y, p.m - 1, p.d + n)), 'UTC', 'yyyy-MM-dd');
-}
-function daysBetween_(a, b) {
-  const x = parseYmd_(a), y = parseYmd_(b);
-  return Math.round((Date.UTC(y.y, y.m - 1, y.d) - Date.UTC(x.y, x.m - 1, x.d)) / 86400000);
-}
-function baseSubject_(s) {
-  return String(s).replace(/\s*\((L|T)\)\s*$/i, '').trim();
-}
-function nowText_() {
-  return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm');
-}
-
-// ตารางเรียนของแต่ละวัน (อ่านชีตครั้งเดียวต่อวันในสัปดาห์)
-function makeTT_() {
-  const cache = {};
-  return function (wd) { return cache[wd] || (cache[wd] = getPeriods_(wd)); };
-}
-
-// คาบเรียนทั้งหมดที่ตกในช่วงวันที่ from..to
-function affected_(from, to, tt) {
-  const out = [];
-  const n = daysBetween_(from, to);
-  for (let i = 0; i <= n && i <= 31; i++) {
-    const d = addDays_(from, i);
-    const wd = dayOfWeek_(d);
-    tt(wd).forEach(p => out.push({ date: d, wd: wd, label: p.label, subject: p.subject, room: p.room }));
-  }
-  return out;
-}
-
-// จำนวนคาบที่กระทบของใบลา (ป้องกันกรณีมีคนแก้วันที่ในชีตผิดรูปแบบ)
-function countAffected_(l, tt) {
-  if (!parseYmd_(l.from) || !parseYmd_(l.to)) return 0;
-  if (daysBetween_(l.from, l.to) < 0 || daysBetween_(l.from, l.to) > 30) return 0;
-  return affected_(l.from, l.to, tt).length;
-}
-
-// ตรวจช่วงวันที่ขอลา: รูปแบบถูก, ถึง>=เริ่ม, ไม่เกิน 30 วัน, ย้อนหลังไม่เกิน 30 วัน
-function validRange_(from, to) {
-  if (!parseYmd_(from) || !parseYmd_(to)) return 'badrange';
-  if (daysBetween_(from, to) < 0 || daysBetween_(from, to) > 30) return 'badrange';
-  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
-  if (daysBetween_(from, today) > 30) return 'badrange';
-  return '';
-}
-
-// ----- ตรวจรหัสนักเรียน + รหัสผ่าน (ใส่ผิดเกิน 5 ครั้ง ล็อก 10 นาที) -----
-function auth_(code, pass) {
-  code = String(code || '').trim();
-  pass = String(pass || '').trim();
-  if (!code) return { status: 'badlogin' };
-  const cache = CacheService.getScriptCache();
-  const key = 'fail_' + code;
-  const fails = Number(cache.get(key) || 0);
-  if (fails >= 5) return { status: 'locked' };
-  const rows = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_STUDENTS).getDataRange().getDisplayValues().slice(1);
-  const st = rows.find(r => String(r[0]).trim() === code);
-  const saved = st ? String(st[2] || '').trim() : '';
-  if (!st || !saved || saved !== pass) {
-    cache.put(key, String(fails + 1), 600);
-    return { status: 'badlogin' };
-  }
-  cache.remove(key);
-  return { status: 'ok', code: code, name: String(st[1]) };
-}
-
-function readLeaves_() {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LEAVE);
-  if (!sh) return [];
-  return sh.getDataRange().getDisplayValues().slice(1).filter(r => r[0]).map(r => ({
-    id: r[0], at: r[1], code: String(r[2]).trim(), name: r[3], type: r[4],
-    from: r[5], to: r[6], reason: r[7], status: r[8] || 'pending', note: r[9], decidedAt: r[10]
-  }));
-}
-
-// สถิติของนักเรียนหนึ่งคน
-// คาบที่นับ = คาบที่มีคนสแกนอย่างน้อย 1 คน (ถือว่าคาบนั้นมีเรียนจริง)
-// สแกนแล้ว = มา / ไม่ได้สแกนแต่มีใบลาอนุมัติ = ลา (ไม่นับเป็นขาด) / นอกนั้น = ขาด
-function studentData_(code) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const log = ss.getSheetByName(SHEET_LOG).getDataRange().getDisplayValues().slice(1);
-  const sessions = {}, mine = {};
-  log.forEach(r => {
-    if (!r[1] || !r[2]) return;
-    const k = r[1] + '|' + r[2];
-    if (!sessions[k]) sessions[k] = { date: r[1], label: r[2], subject: r[3] };
-    if (String(r[4]).trim() === code) mine[k] = true;
-  });
-
-  const tt = makeTT_();
-  const myLeaves = readLeaves_().filter(l => l.code === code);
-  const approved = myLeaves.filter(l => l.status === 'approved');
-  const onLeave = d => approved.some(l => d >= l.from && d <= l.to);
-
-  const list = Object.keys(sessions).map(k => sessions[k]).sort((a, b) =>
-    a.date === b.date ? (a.label < b.label ? 1 : -1) : (a.date < b.date ? 1 : -1));
-
-  let present = 0, absent = 0, leave = 0;
-  const subj = {}, items = [];
-  list.forEach(s => {
-    const k = s.date + '|' + s.label;
-    const st = mine[k] ? 'present' : (onLeave(s.date) ? 'leave' : 'absent');
-    if (st === 'present') present++; else if (st === 'leave') leave++; else absent++;
-    const base = baseSubject_(s.subject);
-    const b = subj[base] || (subj[base] = { name: base, present: 0, absent: 0, leave: 0 });
-    b[st]++;
-    const per = tt(dayOfWeek_(s.date)).find(p => p.label === s.label && p.subject === s.subject);
-    items.push({ date: s.date, label: s.label, subject: s.subject, room: per ? per.room : '', status: st });
-  });
-
-  const pctOf = (p, a) => (p + a) ? Math.round(p * 1000 / (p + a)) / 10 : null;
-  const den = present + absent;
-  const r = MAX_ABSENT_PCT / 100;
-  const subjects = Object.keys(subj).sort().map(n => {
-    const b = subj[n];
-    b.pct = pctOf(b.present, b.absent);
-    b.absentPct = (b.present + b.absent) ? b.absent * 100 / (b.present + b.absent) : 0;
-    return b;
-  });
-
-  const leaves = myLeaves.slice().sort((a, b) => a.at < b.at ? 1 : -1).map(l => ({
-    id: l.id, type: l.type, from: l.from, to: l.to, reason: l.reason,
-    status: l.status, note: l.note, at: l.at,
-    classes: countAffected_(l, tt)
-  }));
-
-  return {
-    stats: {
-      present: present, absent: absent, leave: leave, total: present + absent + leave,
-      pct: pctOf(present, absent),
-      absentPct: den ? absent * 100 / den : 0,
-      canMiss: den ? Math.floor((r * den - absent) / (1 - r)) : null,
-      maxAbsentPct: MAX_ABSENT_PCT
-    },
-    subjects: subjects,
-    items: items.slice(0, 300),
-    leaves: leaves
-  };
-}
-
-function apiMe(code, pass) {
-  const a = auth_(code, pass);
-  if (a.status !== 'ok') return a;
-  const d = studentData_(a.code);
-  d.status = 'ok';
-  d.code = a.code;
-  d.name = a.name;
-  return d;
-}
-
-function apiLeavePreview(code, pass, from, to) {
-  const a = auth_(code, pass);
-  if (a.status !== 'ok') return a;
-  from = String(from || '').trim();
-  to = String(to || '').trim();
-  const bad = validRange_(from, to);
-  if (bad) return { status: bad };
-  return { status: 'ok', classes: affected_(from, to, makeTT_()) };
-}
-
-function apiLeaveSubmit(p) {
-  const a = auth_(p.code, p.pass);
-  if (a.status !== 'ok') return a;
-  const from = String(p.from || '').trim(), to = String(p.to || '').trim();
-  const bad = validRange_(from, to);
-  if (bad) return { status: bad };
-  const reason = String(p.reason || '').trim().slice(0, 300);
-  if (reason.length < 3) return { status: 'noreason' };
-  const type = LEAVE_TYPES[p.type] || LEAVE_TYPES.other;
-
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(25000); } catch (err) { return { status: 'busy' }; }
-  try {
-    const active = readLeaves_().filter(l => l.code === a.code && (l.status === 'pending' || l.status === 'approved'));
-    if (active.some(l => !(to < l.from || from > l.to))) return { status: 'overlap' };
-    if (active.filter(l => l.status === 'pending').length >= 5) return { status: 'toomany' };
-    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LEAVE);
-    const id = 'L' + Date.now().toString(36);
-    sh.appendRow([id, nowText_(), a.code, a.name, type, from, to, reason, 'pending', '', '']);
-    return { status: 'ok', id: id };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// ----- หัวหน้าห้อง (ตรวจ token ที่ router แล้ว) -----
-function leaveList_() {
-  const tt = makeTT_();
-  const pending = readLeaves_().filter(l => l.status === 'pending')
-    .sort((a, b) => a.at < b.at ? -1 : 1)
-    .map(l => ({
-      id: l.id, name: l.name, code: l.code, type: l.type, from: l.from, to: l.to,
-      reason: l.reason, at: l.at, classes: countAffected_(l, tt)
-    }));
-  return { status: 'ok', pending: pending };
-}
-
-function leaveDecide_(id, decision, note) {
-  if (decision !== 'approved' && decision !== 'rejected') return { status: 'error' };
-  const lock = LockService.getScriptLock();
-  try { lock.waitLock(25000); } catch (err) { return { status: 'busy' }; }
-  try {
-    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LEAVE);
-    const rows = sh.getDataRange().getDisplayValues();
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === String(id)) {
-        if (rows[i][8] && rows[i][8] !== 'pending') return { status: 'done' };
-        sh.getRange(i + 1, 9, 1, 3).setValues([[decision, String(note || '').slice(0, 200), nowText_()]]);
-        return { status: 'ok' };
-      }
-    }
-    return { status: 'notfound' };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// ---------- หน้า HTML ----------
-const PAGE_ = `<!doctype html><html><head><meta charset="utf-8">
+<!doctype html>
+<html lang="lo" translate="no">
+<head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="google" content="notranslate">
+<title>ສະແກນເຊັກຊື່</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
-  body{font-family:system-ui,'Noto Sans Thai','Noto Sans Lao',sans-serif;margin:0;padding:16px;background:#f4f5f7}
-  .box{max-width:480px;margin:40px auto;padding:32px 20px;border-radius:20px;text-align:center;color:#fff}
-  .ok{background:#1e9e4a}.dup{background:#e08a00}.bad{background:#d33}.gray{background:#666}
-  .big{font-size:44px;font-weight:700;margin:0}.name{font-size:26px;margin-top:12px}.sub{margin-top:16px;font-size:18px;opacity:.95}
-  .card{max-width:520px;margin:0 auto 16px;background:#fff;border-radius:14px;padding:16px}
-  .here h2{color:#1e9e4a}.abs h2{color:#d33} h2{margin:0 0 8px} li{padding:4px 0}
-  input{width:100%;box-sizing:border-box;padding:14px;font-size:22px;text-align:center;border:1px solid #ccc;border-radius:10px;letter-spacing:6px}
-  select{width:100%;box-sizing:border-box;padding:12px;font-size:16px;margin:8px 0;border:1px solid #ccc;border-radius:10px}
-  button{margin-top:12px;width:100%;padding:14px;font-size:18px;border:0;border-radius:10px;background:#1a73e8;color:#fff}
-  .err{color:#d33;margin-bottom:8px}
-</style></head><body><div id="app"></div>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,'Noto Sans Lao','Noto Sans Thai',sans-serif;margin:0;min-height:100vh;background:linear-gradient(160deg,#fdfdff 0%,#eaf0fb 55%,#dbe8f9 100%) fixed;color:#222}
+  .wrap{max-width:520px;margin:0 auto;padding:12px}
+  .card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px}
+  h2{margin:0 0 8px}
+  label{display:block;font-weight:600;margin:10px 0 4px}
+  input{width:100%;padding:12px;font-size:16px;border:1px solid #ccc;border-radius:10px}
+  button{width:100%;margin-top:12px;padding:14px;font-size:17px;border:0;border-radius:10px;background:#1a73e8;color:#fff}
+  button.sec{background:#e8eaed;color:#222}
+  button.red{background:#d33}
+  .err{color:#d33;margin-top:8px}
+  .hidden{display:none !important}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:15px}
+  .top b{font-size:16px}
+  #reader{width:100%;border-radius:14px;overflow:hidden;background:#000;min-height:200px}
+  #camMsg{font-size:13px;color:#777;margin-top:6px;word-break:break-word}
+  #banner{margin:12px 0;padding:18px 12px;border-radius:14px;text-align:center;color:#fff;background:#888}
+  #banner .big{font-size:30px;font-weight:700}
+  #banner .name{font-size:22px;margin-top:4px}
+  #banner .sub{font-size:15px;opacity:.95;margin-top:4px}
+  .pend{background:#2a62c9 !important}.ok{background:#1e9e4a !important}.dup{background:#e08a00 !important}.bad{background:#d33 !important}.gray{background:#666 !important}
+  #log .row{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:6px;color:#fff;font-size:15px;background:#888}
+  #log .row.pending{background:#999}
+  ul{margin:6px 0;padding-left:20px}
+  .lv{background:#f4f6fb;border-radius:12px;padding:10px;margin-bottom:8px}
+  .lv .n{font-weight:700}.lv .s{color:#444;font-size:14px;margin-top:2px}.lv .t{color:#777;font-size:12px;margin-top:2px}
+  .lv .acts{display:flex;gap:8px;margin-top:8px}.lv .acts button{flex:1;margin:0;padding:10px;font-size:15px}
+  .setup button.link{background:transparent;border:0;box-shadow:none;min-width:0;margin-top:10px;padding:6px;font-size:15px;color:#2a62c9;text-decoration:underline}
+
+  /* ===== ໜ້າຕັ້ງຄ່າ (ແບບ glass + ວົງມົນສີຟ້າ) ===== */
+  .setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:36px 20px 28px}
+  .setup::before{content:"";position:fixed;left:-110px;bottom:-110px;width:300px;height:300px;border-radius:50%;background:linear-gradient(135deg,#3b7be8,#2a62c9);box-shadow:0 10px 30px rgba(42,98,201,.35);z-index:-1}
+  .ttl{font-size:clamp(28px,8.5vw,44px);font-weight:800;text-align:center;margin:40px 0 28px;color:#000;text-shadow:0 4px 10px rgba(0,0,0,.18);line-height:1.25}
+  .setup .card{width:100%;max-width:420px;background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-radius:36px;padding:34px 26px 30px;box-shadow:0 10px 40px rgba(60,90,160,.12)}
+  .setup label{font-size:18px;font-weight:400;margin:14px 0 6px}
+  .setup input{border:3px solid #000;border-radius:14px;background:rgba(255,255,255,.6);padding:12px}
+  .setup button{display:block;width:auto;min-width:170px;margin:26px auto 0;padding:14px 30px;background:rgba(240,245,255,.92);color:#000;font-size:20px;border:1px solid #cfd8ea;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+  .setup .err{text-align:center}
+  .note{margin-top:auto;padding-top:40px;text-align:center;font-size:16px;color:#000}
+  .note u{display:inline-block;margin-bottom:6px}
+</style>
+</head>
+<body>
+
+<div id="setup" class="wrap setup">
+  <h1 class="ttl">ລະບົບສະແກນເຂົ້າຮຽນ</h1>
+  <div class="card">
+    <label>ID ຄະນະຫ້ອງ</label>
+    <input id="code" inputmode="numeric" autocomplete="username" placeholder="ລະຫັດຂອງທ່ານ">
+    <label>ລະຫັດ</label>
+    <input id="pass" type="password" inputmode="numeric" autocomplete="current-password" placeholder="ລະຫັດຜ່ານສ່ວນຕົວ">
+    <button id="start">ເລີ່ມສະແກນ</button>
+    <button id="forget" class="link" type="button">ລ້າງຂໍ້ມູນທີ່ຈື່ໄວ້</button>
+    <div id="msg" class="err"></div>
+  </div>
+  <div class="note"><u>ໝາຍເຫດ</u><br>ລະບົບສະແກນນີ້ໃຊ້ໄດ້ສະເພາະຄະນະຫ້ອງເທົ່ານັ້ນ</div>
+</div>
+
+<div id="scan" class="wrap hidden">
+  <div class="card top">
+    <div><div id="period"><b>ກຳລັງໂຫຼດ...</b></div><div>ເຊັກຊື່ແລ້ວ <b id="count">0</b> ຄົນ (ຮອບນີ້)</div></div>
+  </div>
+  <div id="reader"></div>
+  <button class="sec" id="flip" style="margin-top:8px">🔄 ສະຫຼັບກ້ອງ</button>
+  <div id="camMsg"></div>
+  <div id="banner"><div class="big">ພ້ອມສະແກນ</div><div class="sub">ສະແກນໄດ້ເທື່ອລະຄົນ</div></div>
+  <div class="card">
+    <button class="sec" id="sumBtn" style="margin-top:0">ເບິ່ງສະຫຼຸບຄົນຂາດຊົ່ວໂມງນີ້</button>
+    <div id="sum" class="hidden" style="margin-top:10px"></div>
+    <button class="sec" id="leaveBtn">ຄຳຂໍລາ</button>
+    <div id="leaveBox" class="hidden" style="margin-top:10px"></div>
+    <button class="red" id="stop">ຢຸດສະແກນ</button>
+  </div>
+  <div id="log"></div>
+</div>
+
 <script>
-var CODE = __CODE__;
-var app = document.getElementById('app');
+var $ = function(id){ return document.getElementById(id); };
+function load(k){ try { return localStorage.getItem(k) || ''; } catch(e){ return ''; } }
+function save(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 
-function getPin(){ try { return localStorage.getItem('pin') || ''; } catch(e){ return ''; } }
-function savePin(p){ try { localStorage.setItem('pin', p); } catch(e){} }
-function clearPin(){ try { localStorage.removeItem('pin'); } catch(e){} }
+// <<< ວາງລິ້ງ Apps Script (/exec) ຂອງທ່ານຢູ່ບ່ອນນີ້ ບ່ອນດຽວ ແລ້ວນັກຮຽນ/ຫົວໜ້າບໍ່ຕ້ອງໃສ່ລິ້ງອີກ
+var API_URL = 'https://script.google.com/macros/s/AKfycbyzNU6LE5y_EvAE742CITsHJPuYEYCPZKedQpX1V7q5LodGthuVbd0T14f0BnDXXIBHhg/exec';
 
-function el(tag, cls, text){
-  var n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
-function clear(){ app.innerHTML = ''; }
+$('code').value = load('lcode');
+$('pass').value = load('lpass');
 
-function showPinForm(msg){
-  clear();
-  var c = el('div','card');
-  c.appendChild(el('h2','', 'สำหรับหัวหน้าห้อง'));
-  c.appendChild(el('div','', 'ใส่ PIN เพื่อ' + (CODE ? 'เช็คชื่อ' : 'ดูสรุป')));
-  if (msg) c.appendChild(el('div','err', msg));
-  var inp = el('input'); inp.type = 'password'; inp.setAttribute('inputmode','numeric'); inp.placeholder = 'PIN';
-  var btn = el('button','', 'ยืนยัน');
-  btn.onclick = function(){ if (inp.value) run(inp.value.trim(), -1); };
-  c.appendChild(inp); c.appendChild(btn);
-  app.appendChild(c);
+var token = '', roster = {}, rosterOk = false, leaveTimer = null;
+var scanner = null, count = 0, seen = {}, wake = null, ac = null;
+var cams = [], camId = load('camId'), facing = 'environment', flipping = false, launchId = 0;
+
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+// ---- ເອີ້ນ API ----
+function call(params){
+  var u = new URL(API_URL);
+  Object.keys(params).forEach(function(k){ u.searchParams.set(k, params[k]); });
+  return fetch(u.toString()).then(function(r){ return r.json(); });
 }
 
-function run(pin, idx){
-  clear(); app.appendChild(el('div','card','กำลังตรวจสอบ...'));
-  var h = google.script.run
-    .withSuccessHandler(function(r){ handle(r, pin); })
-    .withFailureHandler(function(){ showPinForm('เชื่อมต่อไม่ได้ ลองใหม่อีกครั้ง'); });
-  if (CODE) h.apiCheckIn(CODE, pin); else h.apiSummary(pin, idx);
+function doLogin(code, pass){
+  return call({ api: 'leaderLogin', code: code, pass: pass }).then(function(r){
+    if (r.status === 'ok'){
+      token = r.token;
+      roster = {}; (r.roster || []).forEach(function(x){ roster[x[0]] = x[1]; });
+      rosterOk = (r.roster || []).length > 0;
+      save('lcode', code); save('lpass', pass);
+    }
+    return r;
+  });
 }
 
-function handle(r, pin){
-  if (r.status === 'badpin'){ clearPin(); showPinForm('PIN ไม่ถูกต้อง'); return; }
-  savePin(pin);
-  clear();
-  if (!CODE) return renderSummary(r);
-  var b;
-  if (r.status === 'ok' || r.status === 'dup'){
-    var ok = r.status === 'ok';
-    b = el('div', 'box ' + (ok ? 'ok' : 'dup'));
-    b.appendChild(el('p','big', ok ? '✓ มาเรียน' : 'สแกนแล้ว'));
-    b.appendChild(el('div','name', r.name));
-    b.appendChild(el('div','', r.code));
-    b.appendChild(el('div','sub', r.subject + (r.room ? ' (' + r.room + ')' : '') + '  ' + r.label));
-    if (!ok) b.appendChild(el('div','sub','คาบนี้เช็คชื่อไปแล้ว'));
-  } else if (r.status === 'noclass'){
-    b = el('div','box gray'); b.appendChild(el('p','big','ไม่มีคาบเรียน'));
-    b.appendChild(el('div','sub','ตอนนี้ไม่ใช่เวลาเรียนตามตารางเรียน'));
+// ເອີ້ນ API ພ້ອມ token ຖ້າ token ໝົດອາຍຸ ຈະລ໊ອກອິນຄືນເອງ 1 ຄັ້ງ
+function api(params){
+  var p = {}; Object.keys(params).forEach(function(k){ p[k] = params[k]; });
+  p.token = token;
+  return call(p).then(function(r){
+    if (r.status !== 'badtoken') return r;
+    return doLogin(load('lcode'), load('lpass')).then(function(l){
+      if (l.status !== 'ok') return { status: 'badtoken' };
+      p.token = token;
+      return call(p);
+    });
+  });
+}
+
+// ---- ສຽງ/ສັ່ນ ----
+function beepInit(){ try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
+function beep(freq, ms){
+  try {
+    var o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = freq; g.gain.value = 0.15;
+    o.connect(g); g.connect(ac.destination); o.start();
+    setTimeout(function(){ o.stop(); }, ms);
+  } catch(e){}
+}
+function vib(p){ try { if (navigator.vibrate) navigator.vibrate(p); } catch(e){} }
+
+// ---- ເລີ່ມ/ຢຸດ ----
+$('start').onclick = function(){
+  var code = $('code').value.trim(), pass = $('pass').value.trim();
+  var msg = $('msg'); msg.textContent = '';
+  if (API_URL.indexOf('/exec') < 0){ msg.textContent = 'ຍັງບໍ່ໄດ້ໃສ່ລິ້ງລະບົບໃນໄຟລ໌ (API_URL)'; return; }
+  if (!code || !pass){ msg.textContent = 'ກະລຸນາຕື່ມລະຫັດ ແລະ ລະຫັດຜ່ານ'; return; }
+  beepInit();
+  msg.textContent = 'ກຳລັງກວດສອບ...';
+  doLogin(code, pass).then(function(r){
+    if (r.status === 'badlogin'){ msg.textContent = 'ລະຫັດ ຫຼື ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ (ສະເພາະຫົວໜ້າຫ້ອງ)'; return; }
+    if (r.status === 'locked'){ msg.textContent = 'ໃສ່ຜິດຫຼາຍເກີນໄປ ລອງໃໝ່ອີກ 10 ນາທີ'; return; }
+    if (r.status !== 'ok'){ msg.textContent = 'ເຊື່ອມຕໍ່ລະບົບບໍ່ສຳເລັດ ກວດລິ້ງ ແລະ ການ Deploy'; return; }
+    msg.textContent = '';
+    startCamera();
+  }).catch(function(){ msg.textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກວດອິນເຕີເນັດ ແລະ ການ Deploy ແບບ "ທຸກຄົນ"'; });
+};
+$('forget').onclick = function(){
+  save('lcode', ''); save('lpass', ''); $('code').value = ''; $('pass').value = ''; $('msg').textContent = 'ລ້າງແລ້ວ';
+};
+
+// ---- ກ້ອງ ----
+function camNote(m){ $('camMsg').textContent = m || ''; }
+
+function camIndex(){
+  for (var k = 0; k < cams.length; k++) if (cams[k].id === camId) return k;
+  return -1;
+}
+
+function updateFlipLabel(){
+  var t = '🔄 ສະຫຼັບກ້ອງ';
+  var i = camIndex();
+  if (i >= 0) t += ' (' + (i + 1) + '/' + cams.length + ': ' + (cams[i].label || '') + ')';
+  else if (!cams.length) t += ' (' + (facing === 'user' ? 'ກ້ອງໜ້າ' : 'ກ້ອງຫຼັງ') + ')';
+  $('flip').textContent = t;
+}
+
+// ຂໍສິດກ້ອງກ່ອນ ເພື່ອໃຫ້ໄດ້ຊື່ກ້ອງທັງໝົດ ແລ້ວປິດທັນທີ
+function listCams(){
+  var md = navigator.mediaDevices;
+  if (!md || !md.enumerateDevices) return Promise.resolve();
+  return md.getUserMedia({ video: true })
+    .then(function(st){ st.getTracks().forEach(function(t){ t.stop(); }); })
+    .catch(function(){})
+    .then(function(){ return sleep(400); })
+    .then(function(){ return md.enumerateDevices(); })
+    .then(function(devs){
+      cams = devs.filter(function(d){ return d.kind === 'videoinput'; })
+                 .map(function(d){ return { id: d.deviceId, label: d.label || '' }; });
+    })
+    .catch(function(){ cams = []; });
+}
+
+// ເລືອກກ້ອງຫຼັງຕົວຫຼັກ (ຫຼີກ ultra-wide) ໃຊ້ເມື່ອມີກ້ອງຫຼັງຫຼາຍກວ່າ 1 ຕົວ
+function pickMain(list){
+  var back = list.filter(function(c){ return /back|rear|environment/i.test(c.label); });
+  if (back.length < 2) return null;
+  var main = back.filter(function(c){ return !/ultra|wide|tele|macro|depth/i.test(c.label); });
+  var pool = main.length ? main : back;
+  var num = function(c){ var m = c.label.match(/camera\d*\s+(\d+)/i); return m ? parseInt(m[1], 10) : 99; };
+  pool.sort(function(a, b){ return num(a) - num(b); });
+  return pool[0];
+}
+
+function stopScanner(){
+  var s = scanner; scanner = null;
+  var p = Promise.resolve();
+  if (s){ try { p = Promise.resolve(s.stop()); } catch(e){} }
+  return Promise.race([p.catch(function(){}), sleep(2500)]).then(function(){
+    try { var v = document.querySelector('#reader video'); if (v && v.srcObject) v.srcObject.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
+    try { if (s) s.clear(); } catch(e){}
+    $('reader').innerHTML = '';
+    return sleep(400);
+  });
+}
+
+function startCamera(){
+  $('setup').classList.add('hidden');
+  $('scan').classList.remove('hidden');
+  $('period').innerHTML = '<b>ພ້ອມສະແກນ</b>';
+  try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function(w){ wake = w; }).catch(function(){}); } catch(e){}
+  camNote('ກຳລັງເປີດກ້ອງ...');
+  refreshLeaveBadge();
+  clearInterval(leaveTimer); leaveTimer = setInterval(refreshLeaveBadge, 90000);
+  listCams().then(function(){
+    if (camIndex() < 0){
+      var p = pickMain(cams);
+      camId = p ? p.id : '';
+      save('camId', camId);
+    }
+    launch();
+  });
+}
+
+function launch(){
+  var my = ++launchId, done = false;
+  updateFlipLabel();
+  var sc = new Html5Qrcode('reader', {
+    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],       // ຫາສະເພາະ QR ໄວຂຶ້ນ
+    useBarCodeDetectorIfSupported: true,                           // ໃຊ້ຕົວອ່ານຂອງມືຖື (ໄວກວ່າ) ຖ້າມີ
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    verbose: false
+  });
+  scanner = sc;
+
+  var fail = function(err){
+    if (done || my !== launchId) return;
+    done = true;
+    camNote('ເປີດກ້ອງບໍ່ໄດ້: ' + (err && err.message ? err.message : err));
+    if (camId){
+      // ຖ້າເປີດກ້ອງທີ່ເລືອກບໍ່ໄດ້ ໃຫ້ລອງໃໝ່ດ້ວຍຄ່າເລີ່ມຕົ້ນ
+      camId = ''; save('camId', '');
+      stopScanner().then(function(){ if (!$('scan').classList.contains('hidden')) launch(); });
+    } else {
+      stopCamera('ເປີດກ້ອງບໍ່ໄດ້ ກະລຸນາອະນຸຍາດການໃຊ້ກ້ອງແລ້ວລອງໃໝ່');
+    }
+  };
+  setTimeout(function(){ fail('ໝົດເວລາ'); }, 7000);
+
+  sc.start(
+    camId ? camId : { facingMode: facing },
+    { fps: 25, disableFlip: true, qrbox: function(w, h){ var s = Math.floor(Math.min(w, h) * 0.75); return { width: s, height: s }; } },
+    onScan,
+    function(){}
+  ).then(function(){
+    if (my !== launchId) return;
+    done = true;
+    camNote('');
+    updateFlipLabel();
+    // ຂໍພາບຄົມຂຶ້ນ + ໂຟກັດຕໍ່ເນື່ອງ ເພື່ອອ່ານ QR ໄວຂຶ້ນ (ບາງເຄື່ອງບໍ່ຮອງຮັບ ກໍຂ້າມໄປ)
+    try {
+      sc.applyVideoConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] }).catch(function(){});
+    } catch(e){}
+  }).catch(fail);
+}
+
+function stopCamera(message){
+  launchId++;
+  clearInterval(leaveTimer);
+  try { if (wake) { wake.release(); wake = null; } } catch(e){}
+  stopScanner().then(function(){
+    $('scan').classList.add('hidden');
+    $('setup').classList.remove('hidden');
+    $('msg').textContent = message || '';
+  });
+}
+$('stop').onclick = function(){ stopCamera(''); };
+
+// ---- ສະຫຼັບກ້ອງ (ວົນໄປທຸກກ້ອງໃນເຄື່ອງ: ກ້ອງຫຼັກ, ultra-wide, ກ້ອງໜ້າ ...) ----
+$('flip').onclick = function(){
+  if (flipping) return;
+  flipping = true;
+  if (cams.length){
+    camId = cams[(camIndex() + 1) % cams.length].id;
+    save('camId', camId);
   } else {
-    b = el('div','box bad'); b.appendChild(el('p','big','ไม่พบรหัส')); b.appendChild(el('div','', r.code));
+    camId = '';
+    facing = (facing === 'environment') ? 'user' : 'environment';
   }
-  app.appendChild(b);
+  camNote('ກຳລັງສະຫຼັບກ້ອງ...');
+  stopScanner().then(function(){ launch(); }).catch(function(){}).then(function(){
+    setTimeout(function(){ flipping = false; }, 800);
+  });
+};
+
+// ---- ສະແກນ ----
+function extractCode(t){
+  t = String(t).trim();
+  var m = t.match(/[?&]code=([^&#]+)/);
+  return m ? decodeURIComponent(m[1]) : t;
 }
 
-function list(title, cls, arr){
-  var c = el('div','card ' + cls);
-  c.appendChild(el('h2','', title + ' (' + arr.length + ')'));
-  var ul = el('ul');
-  if (!arr.length) ul.appendChild(el('li','','-'));
-  arr.forEach(function(r){ ul.appendChild(el('li','', r[0] + ' – ' + r[1])); });
-  c.appendChild(ul);
-  return c;
-}
-
-function renderSummary(r){
-  var head = el('div','card');
-  head.appendChild(el('h2','', 'สรุปวันที่ ' + r.day));
-  if (!r.periods.length){
-    head.appendChild(el('div','','วันนี้ไม่มีคาบเรียนตามตาราง'));
-    app.appendChild(head);
+function onScan(text){
+  var code = extractCode(text);
+  if (!code) return;
+  var now = Date.now();
+  if (seen[code] && now - seen[code] < 8000) return; // ກັນສະແກນຊ້ຳຄົນເດີມ
+  seen[code] = now;
+  var name = roster[code];
+  var row = addRow(code);
+  if (rosterOk && !name){            // ບໍ່ມີໃນລາຍຊື່ ບອກທັນທີ ບໍ່ຕ້ອງລໍຖ້າ server
+    setTimeout(function(){ delete seen[code]; }, 2500);
+    finish(row, code, { status: 'unknown', code: code });
     return;
   }
-  var sel = el('select');
-  r.periods.forEach(function(t, i){
-    var o = el('option','', t); o.value = i; if (i === r.idx) o.selected = true; sel.appendChild(o);
-  });
-  sel.onchange = function(){ run(getPin(), Number(sel.value)); };
-  head.appendChild(sel);
-  head.appendChild(el('div','', 'มาเรียน ' + r.here.length + ' คน / ขาดเรียน ' + r.absent.length + ' คน'));
-  var b = el('button','','รีเฟรช'); b.onclick = function(){ run(getPin(), r.idx); };
-  head.appendChild(b);
-  app.appendChild(head);
-  app.appendChild(list('ขาดเรียน','abs', r.absent));
-  app.appendChild(list('มาเรียน','here', r.here));
+  if (name){                         // ສະແດງຊື່ທັນທີ ຂະນະບັນທຶກ
+    row.a.textContent = '… ' + name;
+    banner('pend', 'ກຳລັງບັນທຶກ', name, '');
+    beep(1200, 40); vib(30);
+  }
+  api({ api: 'checkin', code: code })
+    .then(function(r){ finish(row, code, r); })
+    .catch(function(){ finish(row, code, { status: 'error' }); });
 }
 
-var saved = getPin();
-if (saved) run(saved, -1); else showPinForm('');
-</script></body></html>`;
+function addRow(code){
+  var d = document.createElement('div'); d.className = 'row pending';
+  var a = document.createElement('span'); a.textContent = code + ' ...';
+  var b = document.createElement('span');
+  d.appendChild(a); d.appendChild(b);
+  var log = $('log'); log.insertBefore(d, log.firstChild);
+  while (log.children.length > 30) log.removeChild(log.lastChild);
+  return { el: d, a: a, b: b };
+}
+
+function banner(cls, big, name, sub){
+  var b = $('banner');
+  b.className = cls;
+  b.innerHTML = '';
+  var x = document.createElement('div'); x.className = 'big'; x.textContent = big; b.appendChild(x);
+  if (name){ var y = document.createElement('div'); y.className = 'name'; y.textContent = name; b.appendChild(y); }
+  if (sub){ var z = document.createElement('div'); z.className = 'sub'; z.textContent = sub; b.appendChild(z); }
+}
+
+function finish(row, code, r){
+  var t = new Date().toTimeString().slice(0, 5);
+  row.b.textContent = t;
+  if (r.subject){ $('period').innerHTML = ''; var bb = document.createElement('b'); bb.textContent = r.subject + '  ' + r.label; $('period').appendChild(bb); }
+
+  if (r.status === 'ok'){
+    count++; $('count').textContent = count;
+    row.el.className = 'row ok'; row.a.textContent = '✓ ' + r.name;
+    banner('ok', '✓ ມາຮຽນ', r.name, r.subject + '  ' + r.label);
+    beep(880, 120); vib(80);
+  } else if (r.status === 'dup'){
+    row.el.className = 'row dup'; row.a.textContent = 'ສະແກນແລ້ວ ' + r.name;
+    banner('dup', 'ສະແກນແລ້ວ', r.name, 'ຄາບນີ້ເຊັກຊື່ໄປແລ້ວ');
+    beep(440, 200); vib([60, 60, 60]);
+  } else if (r.status === 'unknown'){
+    row.el.className = 'row bad'; row.a.textContent = 'ບໍ່ພົບລະຫັດ ' + code;
+    banner('bad', 'ບໍ່ພົບລະຫັດ', code, '');
+    beep(220, 300); vib(300);
+  } else if (r.status === 'noclass'){
+    delete seen[code];
+    row.el.className = 'row gray'; row.a.textContent = 'ບໍ່ມີຄາບຮຽນ';
+    $('period').innerHTML = '<b>ຕອນນີ້ບໍ່ມີຄາບຮຽນ</b>';
+    banner('gray', 'ບໍ່ມີຄາບຮຽນ', '', 'ຕອນນີ້ບໍ່ແມ່ນເວລາຮຽນຕາມຕາຕະລາງ');
+    beep(300, 200);
+  } else if (r.status === 'badtoken'){
+    stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່');
+  } else {
+    delete seen[code];
+    row.el.className = 'row bad'; row.a.textContent = 'ຜິດພາດ ສະແກນໃໝ່ ' + code;
+    banner('bad', 'ຜິດພາດ', 'ສະແກນໃໝ່ອີກຄັ້ງ', '');
+    beep(220, 300);
+  }
+}
+
+// ---- ສະຫຼຸບ ----
+$('sumBtn').onclick = function(){
+  var box = $('sum');
+  box.classList.remove('hidden');
+  box.textContent = 'ກຳລັງໂຫຼດ...';
+  api({ api: 'summary', idx: -1 }).then(function(r){
+    if (r.status !== 'ok'){ box.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
+    if (!r.periods.length){ box.textContent = 'ມື້ນີ້ບໍ່ມີຊົ່ວໂມງຮຽນ'; return; }
+    box.innerHTML = '';
+    var h = document.createElement('div');
+    h.innerHTML = '<b></b><div></div>';
+    h.firstChild.textContent = r.periods[r.idx];
+    h.lastChild.textContent = 'ມາຮຽນ ' + r.here.length + ' ຄົນ / ຂາດຮຽນ ' + r.absent.length + ' ຄົນ';
+    box.appendChild(h);
+    var ul = document.createElement('ul');
+    r.absent.forEach(function(s){ var li = document.createElement('li'); li.textContent = s[0] + ' – ' + s[1]; ul.appendChild(li); });
+    if (r.absent.length) { var t = document.createElement('div'); t.textContent = 'ຂາດຮຽນ:'; box.appendChild(t); box.appendChild(ul); }
+  }).catch(function(){ box.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; });
+};
+
+// ---- ຄຳຂໍລາ (ຫົວໜ້າຫ້ອງອະນຸມັດ) ----
+var LAO_MONTHS = ['ມັງກອນ','ກຸມພາ','ມີນາ','ເມສາ','ພຶດສະພາ','ມິຖຸນາ','ກໍລະກົດ','ສິງຫາ','ກັນຍາ','ຕຸລາ','ພະຈິກ','ທັນວາ'];
+function fmtD(s){
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+  return m ? (+m[3]) + ' ' + LAO_MONTHS[+m[2] - 1] + ' ' + m[1] : (s || '');
+}
+function leaveCount(n){ $('leaveBtn').textContent = 'ຄຳຂໍລາ' + (n ? ' (ລໍຖ້າ ' + n + ')' : ''); }
+
+function loadLeave(){
+  return api({ api: 'leaveList' }).then(function(r){
+    if (r.status !== 'ok') return null;
+    leaveCount(r.pending.length);
+    return r;
+  }).catch(function(){ return null; });
+}
+function refreshLeaveBadge(){ return loadLeave(); }
+
+function mk(tag, cls, text){
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function renderLeave(r){
+  var box = $('leaveBox');
+  box.innerHTML = '';
+  if (!r){ box.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
+  if (!r.pending.length){ box.textContent = 'ບໍ່ມີຄຳຂໍລາທີ່ລໍຖ້າ'; return; }
+  r.pending.forEach(function(it){
+    var card = mk('div', 'lv');
+    card.appendChild(mk('div', 'n', it.name + ' (' + it.code + ')'));
+    card.appendChild(mk('div', 's', it.type + ' · ' + fmtD(it.from) + (it.to !== it.from ? ' – ' + fmtD(it.to) : '') + ' · ກະທົບ ' + it.classes + ' ຄາບ'));
+    card.appendChild(mk('div', 's', 'ເຫດຜົນ: ' + it.reason));
+    card.appendChild(mk('div', 't', 'ສົ່ງເມື່ອ ' + it.at));
+    var row = mk('div', 'acts');
+    var ok = mk('button', '', '✓ ອະນຸຍາດ'); ok.style.background = '#1e9e4a';
+    var no = mk('button', '', '✕ ບໍ່ອະນຸຍາດ'); no.style.background = '#d33';
+    ok.onclick = function(){ decide(it, 'approved', ok, no); };
+    no.onclick = function(){ decide(it, 'rejected', ok, no); };
+    row.appendChild(ok); row.appendChild(no); card.appendChild(row);
+    box.appendChild(card);
+  });
+}
+
+function decide(it, decision, ok, no){
+  var note = '';
+  if (decision === 'rejected'){
+    note = window.prompt('ເຫດຜົນທີ່ບໍ່ອະນຸຍາດ (ບໍ່ໃສ່ກໍໄດ້)', '');
+    if (note === null) return;
+  } else if (!window.confirm('ອະນຸຍາດຄຳຂໍລາຂອງ ' + it.name + ' ?')) return;
+  ok.disabled = true; no.disabled = true;
+  api({ api: 'leaveDecide', id: it.id, decision: decision, note: note }).then(function(r){
+    if (r.status === 'badtoken'){ stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); return; }
+    if (r.status !== 'ok' && r.status !== 'done') window.alert('ບັນທຶກບໍ່ສຳເລັດ ກະລຸນາລອງໃໝ່');
+    return loadLeave().then(renderLeave);
+  }).catch(function(){
+    ok.disabled = false; no.disabled = false;
+    window.alert('ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່');
+  });
+}
+
+$('leaveBtn').onclick = function(){
+  var box = $('leaveBox');
+  if (!box.classList.contains('hidden')){ box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.textContent = 'ກຳລັງໂຫຼດ...';
+  loadLeave().then(renderLeave);
+};
+</script>
+</body>
+</html>
