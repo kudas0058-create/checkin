@@ -31,6 +31,15 @@
   #log .row{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:6px;color:#fff;font-size:15px;background:#888}
   #log .row.pending{background:#999}
   ul{margin:6px 0;padding-left:20px}
+  .rep select{width:100%;padding:11px;border-radius:12px;border:1px solid #c5d0ee;font:inherit;background:#fff;margin:4px 0 10px}
+  .rep label{font-size:14px;color:#445}
+  .rep .head{font-weight:700;font-size:17px;margin:4px 0}
+  .rep .sub{color:#555;font-size:14px;margin-bottom:8px}
+  .rep .ab{background:#fff1f0;border-radius:12px;padding:10px;margin-bottom:8px}
+  .rep .ab .n{font-weight:700}.rep .ab .c{color:#b3261e;font-weight:700}.rep .ab .d{color:#555;font-size:13px;margin-top:3px;word-break:break-word}
+  .rep .ok2{background:#eef8f0;border-radius:12px;padding:10px;font-size:14px;color:#1b5e20;margin-bottom:8px;word-break:break-word}
+  .rep .acts2{display:flex;gap:8px;margin-top:8px}.rep .acts2 button{margin:0;padding:11px;font-size:15px}
+  @media print{body *{visibility:hidden !important}#repOut,#repOut *{visibility:visible !important}#repOut{position:absolute;left:0;top:0;width:100%;padding:12px}.noprint{display:none !important}}
   .lv{background:#f4f6fb;border-radius:12px;padding:10px;margin-bottom:8px}
   .lv .n{font-weight:700}.lv .s{color:#444;font-size:14px;margin-top:2px}.lv .t{color:#777;font-size:12px;margin-top:2px}
   .lv .acts{display:flex;gap:8px;margin-top:8px}.lv .acts button{flex:1;margin:0;padding:10px;font-size:15px}
@@ -54,9 +63,9 @@
 <div id="setup" class="wrap setup">
   <h1 class="ttl">ລະບົບສະແກນເຂົ້າຮຽນ</h1>
   <div class="card">
-    <label>ID ຄະນະຫ້ອງ</label>
-    <input id="code" inputmode="numeric" autocomplete="username" placeholder="ລະຫັດຂອງທ່ານ">
     <label>ລະຫັດ</label>
+    <input id="code" inputmode="numeric" autocomplete="username" placeholder="ລະຫັດຂອງທ່ານ">
+    <label>ລະຫັດຜ່ານພິເສດ</label>
     <input id="pass" type="password" inputmode="numeric" autocomplete="current-password" placeholder="ລະຫັດຜ່ານສ່ວນຕົວ">
     <button id="start">ເລີ່ມສະແກນ</button>
     <button id="forget" class="link" type="button">ລ້າງຂໍ້ມູນທີ່ຈື່ໄວ້</button>
@@ -72,12 +81,20 @@
   <div id="reader"></div>
   <button class="sec" id="flip" style="margin-top:8px">🔄 ສະຫຼັບກ້ອງ</button>
   <div id="camMsg"></div>
-  <div id="banner"><div class="big">ພ້ອມສະແກນ</div><div class="sub">ສະແກນໄດ້ເທື່ອລະຄົນ</div></div>
+  <div id="banner"><div class="big">ພ້ອມສະແກນ</div><div class="sub">ສ່ອງ QR ຂອງນັກຮຽນໄດ້ເທື່ອລະຄົນເລີຍ</div></div>
   <div class="card">
-    <button class="sec" id="sumBtn" style="margin-top:0">ເບິ່ງສະຫຼຸບຄົນຂາດຊົ່ວໂມງນີ້</button>
+    <button class="sec" id="sumBtn" style="margin-top:0">ເບິ່ງສະຫຼຸບຄາບນີ້ (ໃຜຂາດ)</button>
     <div id="sum" class="hidden" style="margin-top:10px"></div>
     <button class="sec" id="leaveBtn">ຄຳຂໍລາ</button>
     <div id="leaveBox" class="hidden" style="margin-top:10px"></div>
+    <button class="sec" id="repBtn">ລາຍງານລາຍວິຊາ (ສະຫຼຸບການຂາດ)</button>
+    <div id="repBox" class="hidden rep" style="margin-top:10px">
+      <label for="repSub">ວິຊາ</label>
+      <select id="repSub"></select>
+      <label for="repMon">ເດືອນ</label>
+      <select id="repMon"></select>
+      <div id="repOut">ກຳລັງໂຫຼດ...</div>
+    </div>
     <button class="red" id="stop">ຢຸດສະແກນ</button>
   </div>
   <div id="log"></div>
@@ -399,7 +416,7 @@ $('sumBtn').onclick = function(){
   box.textContent = 'ກຳລັງໂຫຼດ...';
   api({ api: 'summary', idx: -1 }).then(function(r){
     if (r.status !== 'ok'){ box.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
-    if (!r.periods.length){ box.textContent = 'ມື້ນີ້ບໍ່ມີຊົ່ວໂມງຮຽນ'; return; }
+    if (!r.periods.length){ box.textContent = 'ມື້ນີ້ບໍ່ມີຄາບຮຽນ'; return; }
     box.innerHTML = '';
     var h = document.createElement('div');
     h.innerHTML = '<b></b><div></div>';
@@ -448,8 +465,8 @@ function renderLeave(r){
     card.appendChild(mk('div', 's', 'ເຫດຜົນ: ' + it.reason));
     card.appendChild(mk('div', 't', 'ສົ່ງເມື່ອ ' + it.at));
     var row = mk('div', 'acts');
-    var ok = mk('button', '', '✓ ອະນຸຍາດ'); ok.style.background = '#1e9e4a';
-    var no = mk('button', '', '✕ ບໍ່ອະນຸຍາດ'); no.style.background = '#d33';
+    var ok = mk('button', '', '✓ ອະນຸມັດ'); ok.style.background = '#1e9e4a';
+    var no = mk('button', '', '✕ ບໍ່ອະນຸມັດ'); no.style.background = '#d33';
     ok.onclick = function(){ decide(it, 'approved', ok, no); };
     no.onclick = function(){ decide(it, 'rejected', ok, no); };
     row.appendChild(ok); row.appendChild(no); card.appendChild(row);
@@ -460,9 +477,9 @@ function renderLeave(r){
 function decide(it, decision, ok, no){
   var note = '';
   if (decision === 'rejected'){
-    note = window.prompt('ເຫດຜົນທີ່ບໍ່ອະນຸຍາດ (ບໍ່ໃສ່ກໍໄດ້)', '');
+    note = window.prompt('ເຫດຜົນທີ່ບໍ່ອະນຸມັດ (ບໍ່ໃສ່ກໍໄດ້)', '');
     if (note === null) return;
-  } else if (!window.confirm('ອະນຸຍາດຄຳຂໍລາຂອງ ' + it.name + ' ?')) return;
+  } else if (!window.confirm('ອະນຸມັດຄຳຂໍລາຂອງ ' + it.name + ' ?')) return;
   ok.disabled = true; no.disabled = true;
   api({ api: 'leaveDecide', id: it.id, decision: decision, note: note }).then(function(r){
     if (r.status === 'badtoken'){ stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); return; }
@@ -481,6 +498,102 @@ $('leaveBtn').onclick = function(){
   box.textContent = 'ກຳລັງໂຫຼດ...';
   loadLeave().then(renderLeave);
 };
+
+// ---- ລາຍງານລາຍວິຊາ-ລາຍເດືອນ (ແຕ່ລະວິຊາແຍກກັນ ເຊັ່ນ Statistics (L) ກັບ (T)) ----
+function monthLabel(m){
+  var p = /^(\d{4})-(\d{2})$/.exec(m || '');
+  return p ? LAO_MONTHS[+p[2] - 1] + ' ' + p[1] : (m || '');
+}
+function dmShort(d){
+  var p = /^\d{4}-(\d{2})-(\d{2})$/.exec(d || '');
+  return p ? (+p[2]) + '/' + (+p[1]) : (d || '');
+}
+function thisMonth(){
+  var n = new Date(Date.now() + 7 * 3600 * 1000);   // ເວລາລາວ
+  return n.getUTCFullYear() + '-' + ('0' + (n.getUTCMonth() + 1)).slice(-2);
+}
+function fillSelect(sel, items, labelFn, want){
+  sel.innerHTML = '';
+  items.forEach(function(v){
+    var o = document.createElement('option');
+    o.value = v; o.textContent = labelFn ? labelFn(v) : v;
+    sel.appendChild(o);
+  });
+  if (want && items.indexOf(want) >= 0) sel.value = want;
+}
+
+function repFetch(){
+  var sub = $('repSub').value, mon = $('repMon').value;
+  $('repOut').textContent = 'ກຳລັງໂຫຼດ...';
+  if (sub) save('repSub', sub);
+  return api({ api: 'report', subject: sub, month: mon }).then(renderReport).catch(function(){ $('repOut').textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'; });
+}
+
+function repOpen(){
+  $('repOut').textContent = 'ກຳລັງໂຫຼດ...';
+  api({ api: 'report' }).then(function(r){
+    if (r.status === 'badtoken'){ stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); return; }
+    if (r.status !== 'ok'){ $('repOut').textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
+    var months = r.months.slice();
+    var cur = thisMonth();
+    if (months.indexOf(cur) < 0) months.unshift(cur);
+    fillSelect($('repSub'), r.subjects, null, load('repSub'));
+    fillSelect($('repMon'), months, monthLabel, cur);
+    if (!r.subjects.length){ $('repOut').textContent = 'ຍັງບໍ່ມີຂໍ້ມູນວິຊາ'; return; }
+    repFetch();
+  }).catch(function(){ $('repOut').textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'; });
+}
+
+function renderReport(r){
+  var out = $('repOut');
+  out.innerHTML = '';
+  if (!r || r.status === 'error'){ out.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
+  if (r.status === 'badtoken'){ stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); return; }
+  if (!r.rows){ out.textContent = 'ເລືອກວິຊາ ແລະ ເດືອນ'; return; }
+  out.appendChild(mk('div', 'head', r.subject + ' · ' + monthLabel(r.month)));
+  out.appendChild(mk('div', 'sub', 'ຂຶ້ນສອນ ' + r.held + ' ຄັ້ງ (ນັບສະເພາະຄາບທີ່ມີການສະແກນ)'));
+  if (!r.held){ out.appendChild(mk('div', '', 'ເດືອນນີ້ຍັງບໍ່ມີການສະແກນໃນວິຊານີ້')); return; }
+
+  var absent = r.rows.filter(function(x){ return x.absent > 0; });
+  var full = r.rows.filter(function(x){ return x.absent === 0; });
+  out.appendChild(mk('div', 'sub', 'ຂາດ ' + absent.length + ' ຄົນ · ບໍ່ຂາດ ' + full.length + ' ຄົນ'));
+  absent.forEach(function(x){
+    var c = mk('div', 'ab');
+    var top = mk('div', 'n', x.name + ' (' + x.code + ') ');
+    top.appendChild(mk('span', 'c', '— ຂາດ ' + x.absent + '/' + r.held));
+    c.appendChild(top);
+    c.appendChild(mk('div', 'd', 'ວັນທີ່ຂາດ: ' + x.absentDates.map(function(d){ return dmShort(d.date); }).join(', ')));
+    if (x.leave) c.appendChild(mk('div', 'd', 'ລາ (ອະນຸມັດແລ້ວ) ' + x.leave + ' ຄັ້ງ: ' + x.leaveDates.map(function(d){ return dmShort(d.date); }).join(', ')));
+    out.appendChild(c);
+  });
+  if (full.length){
+    out.appendChild(mk('div', 'ok2', 'ບໍ່ຂາດ (' + full.length + '): ' + full.map(function(x){ return x.name + (x.leave ? ' (ລາ ' + x.leave + ')' : ''); }).join(', ')));
+  }
+  var row = mk('div', 'acts2 noprint');
+  var pr = mk('button', '', '🖨 ພິມ / PDF'); pr.style.background = '#2a62c9';
+  var sv = mk('button', '', '💾 ບັນທຶກສະຫຼຸບເດືອນນີ້'); sv.style.background = '#1e9e4a';
+  pr.onclick = function(){ window.print(); };
+  sv.onclick = function(){
+    if (!window.confirm('ບັນທຶກສະຫຼຸບ ' + monthLabel(r.month) + ' ຂອງທຸກວິຊາ ລົງ Google Sheet ຖາວອນ? (ບັນທຶກຊ້ຳເດືອນເດີມ = ແທນທີ່ເດືອນນັ້ນ ເດືອນອື່ນບໍ່ປ່ຽນ)')) return;
+    sv.disabled = true;
+    api({ api: 'reportSave', month: r.month }).then(function(x){
+      sv.disabled = false;
+      if (x.status === 'ok') window.alert('ບັນທຶກແລ້ວ ' + x.subjects + ' ວິຊາ · ' + x.rows + ' ແຖວ (ແທັບ "ສະຫຼຸບລາຍເດືອນ")');
+      else window.alert('ບັນທຶກບໍ່ສຳເລັດ ກະລຸນາລອງໃໝ່');
+    }).catch(function(){ sv.disabled = false; window.alert('ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'); });
+  };
+  row.appendChild(pr); row.appendChild(sv);
+  out.appendChild(row);
+}
+
+$('repBtn').onclick = function(){
+  var box = $('repBox');
+  if (!box.classList.contains('hidden')){ box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  repOpen();
+};
+$('repSub').onchange = repFetch;
+$('repMon').onchange = repFetch;
 </script>
 </body>
 </html>
