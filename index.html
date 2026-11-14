@@ -39,6 +39,15 @@
   .rep .ab .n{font-weight:700}.rep .ab .c{color:#b3261e;font-weight:700}.rep .ab .d{color:#555;font-size:13px;margin-top:3px;word-break:break-word}
   .rep .ok2{background:#eef8f0;border-radius:12px;padding:10px;font-size:14px;color:#1b5e20;margin-bottom:8px;word-break:break-word}
   .rep .acts2{display:flex;gap:8px;margin-top:8px}.rep .acts2 button{margin:0;padding:11px;font-size:15px}
+  .rep .modes{display:flex;gap:8px;margin:4px 0 8px}.rep .modes button{margin:0;padding:10px;font-size:15px;background:#e8ecf5;color:#223}.rep .modes button.on{background:#2a62c9;color:#fff}
+  .rep .wrapx{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:8px}
+  .rep table{border-collapse:collapse;font-size:13px;min-width:100%}
+  .rep th,.rep td{border:1px solid #d9deea;padding:6px 8px;text-align:center;white-space:nowrap}
+  .rep th{background:#eef2fb;font-weight:700;vertical-align:bottom}.rep th small{display:block;font-weight:400;color:#667}
+  .rep td.nm,.rep th.nm{text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:normal;min-width:110px}
+  .rep th.nm{background:#eef2fb}
+  .rep td.z{color:#999}.rep td.bad{background:#fff1f0;color:#b3261e;font-weight:700}.rep td.tot{font-weight:700}
+  .rep td small{color:#1b5e20;font-weight:400}
   @media print{body *{visibility:hidden !important}#repOut,#repOut *{visibility:visible !important}#repOut{position:absolute;left:0;top:0;width:100%;padding:12px}.noprint{display:none !important}}
   .lv{background:#f4f6fb;border-radius:12px;padding:10px;margin-bottom:8px}
   .lv .n{font-weight:700}.lv .s{color:#444;font-size:14px;margin-top:2px}.lv .t{color:#777;font-size:12px;margin-top:2px}
@@ -89,8 +98,14 @@
     <div id="leaveBox" class="hidden" style="margin-top:10px"></div>
     <button class="sec" id="repBtn">ລາຍງານລາຍວິຊາ (ສະຫຼຸບການຂາດ)</button>
     <div id="repBox" class="hidden rep" style="margin-top:10px">
-      <label for="repSub">ວິຊາ</label>
-      <select id="repSub"></select>
+      <div class="modes noprint">
+        <button type="button" id="repModeSub" class="on">ລາຍວິຊາ</button>
+        <button type="button" id="repModeAll">ທຸກວິຊາ (ຕາຕະລາງ)</button>
+      </div>
+      <div id="repSubWrap">
+        <label for="repSub">ວິຊາ</label>
+        <select id="repSub"></select>
+      </div>
       <label for="repMon">ເດືອນ</label>
       <select id="repMon"></select>
       <div id="repOut">ກຳລັງໂຫຼດ...</div>
@@ -522,11 +537,22 @@ function fillSelect(sel, items, labelFn, want){
   if (want && items.indexOf(want) >= 0) sel.value = want;
 }
 
+var repMode = 'sub';
+function setRepMode(m){
+  repMode = m;
+  $('repModeSub').className = m === 'sub' ? 'on' : '';
+  $('repModeAll').className = m === 'all' ? 'on' : '';
+  $('repSubWrap').style.display = m === 'sub' ? '' : 'none';
+  repFetch();
+}
+
 function repFetch(){
   var sub = $('repSub').value, mon = $('repMon').value;
   $('repOut').textContent = 'ກຳລັງໂຫຼດ...';
+  var fail = function(){ $('repOut').textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'; };
+  if (repMode === 'all') return api({ api: 'reportAll', month: mon }).then(renderAll).catch(fail);
   if (sub) save('repSub', sub);
-  return api({ api: 'report', subject: sub, month: mon }).then(renderReport).catch(function(){ $('repOut').textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'; });
+  return api({ api: 'report', subject: sub, month: mon }).then(renderReport).catch(fail);
 }
 
 function repOpen(){
@@ -569,14 +595,18 @@ function renderReport(r){
   if (full.length){
     out.appendChild(mk('div', 'ok2', 'ບໍ່ຂາດ (' + full.length + '): ' + full.map(function(x){ return x.name + (x.leave ? ' (ລາ ' + x.leave + ')' : ''); }).join(', ')));
   }
+  repActions(out, r.month);
+}
+
+function repActions(out, month){
   var row = mk('div', 'acts2 noprint');
   var pr = mk('button', '', '🖨 ພິມ / PDF'); pr.style.background = '#2a62c9';
   var sv = mk('button', '', '💾 ບັນທຶກສະຫຼຸບເດືອນນີ້'); sv.style.background = '#1e9e4a';
   pr.onclick = function(){ window.print(); };
   sv.onclick = function(){
-    if (!window.confirm('ບັນທຶກສະຫຼຸບ ' + monthLabel(r.month) + ' ຂອງທຸກວິຊາ ລົງ Google Sheet ຖາວອນ? (ບັນທຶກຊ້ຳເດືອນເດີມ = ແທນທີ່ເດືອນນັ້ນ ເດືອນອື່ນບໍ່ປ່ຽນ)')) return;
+    if (!window.confirm('ບັນທຶກສະຫຼຸບ ' + monthLabel(month) + ' ຂອງທຸກວິຊາ ລົງ Google Sheet ຖາວອນ? (ບັນທຶກຊ້ຳເດືອນເດີມ = ແທນທີ່ເດືອນນັ້ນ ເດືອນອື່ນບໍ່ປ່ຽນ)')) return;
     sv.disabled = true;
-    api({ api: 'reportSave', month: r.month }).then(function(x){
+    api({ api: 'reportSave', month: month }).then(function(x){
       sv.disabled = false;
       if (x.status === 'ok') window.alert('ບັນທຶກແລ້ວ ' + x.subjects + ' ວິຊາ · ' + x.rows + ' ແຖວ (ແທັບ "ສະຫຼຸບລາຍເດືອນ")');
       else window.alert('ບັນທຶກບໍ່ສຳເລັດ ກະລຸນາລອງໃໝ່');
@@ -586,6 +616,39 @@ function renderReport(r){
   out.appendChild(row);
 }
 
+function renderAll(r){
+  var out = $('repOut');
+  out.innerHTML = '';
+  if (!r || r.status === 'badtoken'){ if (r) stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); else out.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
+  if (r.status !== 'ok'){ out.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
+  out.appendChild(mk('div', 'head', 'ທຸກວິຊາ · ' + monthLabel(r.month)));
+  if (!r.subjects.length){ out.appendChild(mk('div', '', 'ເດືອນນີ້ຍັງບໍ່ມີການສະແກນ')); return; }
+  out.appendChild(mk('div', 'sub', 'ຕົວເລກ = ຂາດ / ຂຶ້ນສອນ (ວິຊາ (L) ແລະ (T) ແຍກກັນ) · ຕົວຂຽວ = ລາທີ່ອະນຸມັດ'));
+  var wrap = mk('div', 'wrapx'), t = document.createElement('table');
+  var hr = document.createElement('tr');
+  hr.appendChild(mk('th', 'nm', 'ຊື່'));
+  r.subjects.forEach(function(s){
+    var th = mk('th', '', s.name);
+    th.appendChild(mk('small', '', 'ສອນ ' + s.held));
+    hr.appendChild(th);
+  });
+  hr.appendChild(mk('th', '', 'ລວມຂາດ'));
+  t.appendChild(hr);
+  r.rows.forEach(function(x){
+    var tr = document.createElement('tr');
+    tr.appendChild(mk('td', 'nm', x.name));
+    x.cells.forEach(function(c, i){
+      var td = mk('td', c.absent ? 'bad' : 'z', c.absent + '/' + r.subjects[i].held);
+      if (c.leave){ td.appendChild(document.createTextNode(' ')); td.appendChild(mk('small', '', '(ລາ ' + c.leave + ')')); }
+      tr.appendChild(td);
+    });
+    tr.appendChild(mk('td', 'tot' + (x.totalAbsent ? ' bad' : ' z'), String(x.totalAbsent)));
+    t.appendChild(tr);
+  });
+  wrap.appendChild(t); out.appendChild(wrap);
+  repActions(out, r.month);
+}
+
 $('repBtn').onclick = function(){
   var box = $('repBox');
   if (!box.classList.contains('hidden')){ box.classList.add('hidden'); return; }
@@ -593,6 +656,8 @@ $('repBtn').onclick = function(){
   repOpen();
 };
 $('repSub').onchange = repFetch;
+$('repModeSub').onclick = function(){ setRepMode('sub'); };
+$('repModeAll').onclick = function(){ setRepMode('all'); };
 $('repMon').onchange = repFetch;
 </script>
 </body>
