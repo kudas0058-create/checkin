@@ -89,7 +89,7 @@ function load(k){ try { return localStorage.getItem(k) || ''; } catch(e){ return
 function save(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 
 // <<< ວາງລິ້ງ Apps Script (/exec) ຂອງທ່ານຢູ່ບ່ອນນີ້ ບ່ອນດຽວ ແລ້ວນັກຮຽນ/ຫົວໜ້າບໍ່ຕ້ອງໃສ່ລິ້ງອີກ
-var API_URL = 'PASTE_EXEC_URL_HERE';
+var API_URL = 'https://script.gocom/ogle.macros/s/AKfycbyzNU6LE5y_EvAE742CITsHJPuYEYCPZKedQpX1V7q5LodGthuVbd0T14f0BnDXXIBHhg/exec';
 
 $('code').value = load('lcode');
 $('pass').value = load('lpass');
