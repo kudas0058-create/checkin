@@ -31,24 +31,6 @@
   #log .row{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:6px;color:#fff;font-size:15px;background:#888}
   #log .row.pending{background:#999}
   ul{margin:6px 0;padding-left:20px}
-  .rep select{width:100%;padding:11px;border-radius:12px;border:1px solid #c5d0ee;font:inherit;background:#fff;margin:4px 0 10px}
-  .rep label{font-size:14px;color:#445}
-  .rep .head{font-weight:700;font-size:17px;margin:4px 0}
-  .rep .sub{color:#555;font-size:14px;margin-bottom:8px}
-  .rep .ab{background:#fff1f0;border-radius:12px;padding:10px;margin-bottom:8px}
-  .rep .ab .n{font-weight:700}.rep .ab .c{color:#b3261e;font-weight:700}.rep .ab .d{color:#555;font-size:13px;margin-top:3px;word-break:break-word}
-  .rep .ok2{background:#eef8f0;border-radius:12px;padding:10px;font-size:14px;color:#1b5e20;margin-bottom:8px;word-break:break-word}
-  .rep .acts2{display:flex;gap:8px;margin-top:8px}.rep .acts2 button{margin:0;padding:11px;font-size:15px}
-  .rep .modes{display:flex;gap:8px;margin:4px 0 8px}.rep .modes button{margin:0;padding:10px;font-size:15px;background:#e8ecf5;color:#223}.rep .modes button.on{background:#2a62c9;color:#fff}
-  .rep .wrapx{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:8px}
-  .rep table{border-collapse:collapse;font-size:13px;min-width:100%}
-  .rep th,.rep td{border:1px solid #d9deea;padding:6px 8px;text-align:center;white-space:nowrap}
-  .rep th{background:#eef2fb;font-weight:700;vertical-align:bottom}.rep th small{display:block;font-weight:400;color:#667}
-  .rep td.nm,.rep th.nm{text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:normal;min-width:110px}
-  .rep th.nm{background:#eef2fb}
-  .rep td.z{color:#999}.rep td.bad{background:#fff1f0;color:#b3261e;font-weight:700}.rep td.tot{font-weight:700}
-  .rep td small{color:#1b5e20;font-weight:400}
-  @media print{body *{visibility:hidden !important}#repOut,#repOut *{visibility:visible !important}#repOut{position:absolute;left:0;top:0;width:100%;padding:12px}.noprint{display:none !important}}
   .lv{background:#f4f6fb;border-radius:12px;padding:10px;margin-bottom:8px}
   .lv .n{font-weight:700}.lv .s{color:#444;font-size:14px;margin-top:2px}.lv .t{color:#777;font-size:12px;margin-top:2px}
   .lv .acts{display:flex;gap:8px;margin-top:8px}.lv .acts button{flex:1;margin:0;padding:10px;font-size:15px}
@@ -96,20 +78,6 @@
     <div id="sum" class="hidden" style="margin-top:10px"></div>
     <button class="sec" id="leaveBtn">ຄຳຂໍລາ</button>
     <div id="leaveBox" class="hidden" style="margin-top:10px"></div>
-    <button class="sec" id="repBtn">ລາຍງານລາຍວິຊາ (ສະຫຼຸບການຂາດ)</button>
-    <div id="repBox" class="hidden rep" style="margin-top:10px">
-      <div class="modes noprint">
-        <button type="button" id="repModeSub" class="on">ລາຍວິຊາ</button>
-        <button type="button" id="repModeAll">ທຸກວິຊາ (ຕາຕະລາງ)</button>
-      </div>
-      <div id="repSubWrap">
-        <label for="repSub">ວິຊາ</label>
-        <select id="repSub"></select>
-      </div>
-      <label for="repMon">ເດືອນ</label>
-      <select id="repMon"></select>
-      <div id="repOut">ກຳລັງໂຫຼດ...</div>
-    </div>
     <button class="red" id="stop">ຢຸດສະແກນ</button>
   </div>
   <div id="log"></div>
@@ -121,7 +89,7 @@ function load(k){ try { return localStorage.getItem(k) || ''; } catch(e){ return
 function save(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 
 // <<< ວາງລິ້ງ Apps Script (/exec) ຂອງທ່ານຢູ່ບ່ອນນີ້ ບ່ອນດຽວ ແລ້ວນັກຮຽນ/ຫົວໜ້າບໍ່ຕ້ອງໃສ່ລິ້ງອີກ
-var API_URL = 'https://script.google.com/macros/s/AKfycbyzNU6LE5y_EvAE742CITsHJPuYEYCPZKedQpX1V7q5LodGthuVbd0T14f0BnDXXIBHhg/exec';
+var API_URL = 'PASTE_EXEC_URL_HERE';
 
 $('code').value = load('lcode');
 $('pass').value = load('lpass');
@@ -513,152 +481,6 @@ $('leaveBtn').onclick = function(){
   box.textContent = 'ກຳລັງໂຫຼດ...';
   loadLeave().then(renderLeave);
 };
-
-// ---- ລາຍງານລາຍວິຊາ-ລາຍເດືອນ (ແຕ່ລະວິຊາແຍກກັນ ເຊັ່ນ Statistics (L) ກັບ (T)) ----
-function monthLabel(m){
-  var p = /^(\d{4})-(\d{2})$/.exec(m || '');
-  return p ? LAO_MONTHS[+p[2] - 1] + ' ' + p[1] : (m || '');
-}
-function dmShort(d){
-  var p = /^\d{4}-(\d{2})-(\d{2})$/.exec(d || '');
-  return p ? (+p[2]) + '/' + (+p[1]) : (d || '');
-}
-function thisMonth(){
-  var n = new Date(Date.now() + 7 * 3600 * 1000);   // ເວລາລາວ
-  return n.getUTCFullYear() + '-' + ('0' + (n.getUTCMonth() + 1)).slice(-2);
-}
-function fillSelect(sel, items, labelFn, want){
-  sel.innerHTML = '';
-  items.forEach(function(v){
-    var o = document.createElement('option');
-    o.value = v; o.textContent = labelFn ? labelFn(v) : v;
-    sel.appendChild(o);
-  });
-  if (want && items.indexOf(want) >= 0) sel.value = want;
-}
-
-var repMode = 'sub';
-function setRepMode(m){
-  repMode = m;
-  $('repModeSub').className = m === 'sub' ? 'on' : '';
-  $('repModeAll').className = m === 'all' ? 'on' : '';
-  $('repSubWrap').style.display = m === 'sub' ? '' : 'none';
-  repFetch();
-}
-
-function repFetch(){
-  var sub = $('repSub').value, mon = $('repMon').value;
-  $('repOut').textContent = 'ກຳລັງໂຫຼດ...';
-  var fail = function(){ $('repOut').textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'; };
-  if (repMode === 'all') return api({ api: 'reportAll', month: mon }).then(renderAll).catch(fail);
-  if (sub) save('repSub', sub);
-  return api({ api: 'report', subject: sub, month: mon }).then(renderReport).catch(fail);
-}
-
-function repOpen(){
-  $('repOut').textContent = 'ກຳລັງໂຫຼດ...';
-  api({ api: 'report' }).then(function(r){
-    if (r.status === 'badtoken'){ stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); return; }
-    if (r.status !== 'ok'){ $('repOut').textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
-    var months = r.months.slice();
-    var cur = thisMonth();
-    if (months.indexOf(cur) < 0) months.unshift(cur);
-    fillSelect($('repSub'), r.subjects, null, load('repSub'));
-    fillSelect($('repMon'), months, monthLabel, cur);
-    if (!r.subjects.length){ $('repOut').textContent = 'ຍັງບໍ່ມີຂໍ້ມູນວິຊາ'; return; }
-    repFetch();
-  }).catch(function(){ $('repOut').textContent = 'ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'; });
-}
-
-function renderReport(r){
-  var out = $('repOut');
-  out.innerHTML = '';
-  if (!r || r.status === 'error'){ out.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
-  if (r.status === 'badtoken'){ stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); return; }
-  if (!r.rows){ out.textContent = 'ເລືອກວິຊາ ແລະ ເດືອນ'; return; }
-  out.appendChild(mk('div', 'head', r.subject + ' · ' + monthLabel(r.month)));
-  out.appendChild(mk('div', 'sub', 'ຂຶ້ນສອນ ' + r.held + ' ຄັ້ງ (ນັບສະເພາະຄາບທີ່ມີການສະແກນ)'));
-  if (!r.held){ out.appendChild(mk('div', '', 'ເດືອນນີ້ຍັງບໍ່ມີການສະແກນໃນວິຊານີ້')); return; }
-
-  var absent = r.rows.filter(function(x){ return x.absent > 0; });
-  var full = r.rows.filter(function(x){ return x.absent === 0; });
-  out.appendChild(mk('div', 'sub', 'ຂາດ ' + absent.length + ' ຄົນ · ບໍ່ຂາດ ' + full.length + ' ຄົນ'));
-  absent.forEach(function(x){
-    var c = mk('div', 'ab');
-    var top = mk('div', 'n', x.name + ' (' + x.code + ') ');
-    top.appendChild(mk('span', 'c', '— ຂາດ ' + x.absent + '/' + r.held));
-    c.appendChild(top);
-    c.appendChild(mk('div', 'd', 'ວັນທີ່ຂາດ: ' + x.absentDates.map(function(d){ return dmShort(d.date); }).join(', ')));
-    if (x.leave) c.appendChild(mk('div', 'd', 'ລາ (ອະນຸມັດແລ້ວ) ' + x.leave + ' ຄັ້ງ: ' + x.leaveDates.map(function(d){ return dmShort(d.date); }).join(', ')));
-    out.appendChild(c);
-  });
-  if (full.length){
-    out.appendChild(mk('div', 'ok2', 'ບໍ່ຂາດ (' + full.length + '): ' + full.map(function(x){ return x.name + (x.leave ? ' (ລາ ' + x.leave + ')' : ''); }).join(', ')));
-  }
-  repActions(out, r.month);
-}
-
-function repActions(out, month){
-  var row = mk('div', 'acts2 noprint');
-  var pr = mk('button', '', '🖨 ພິມ / PDF'); pr.style.background = '#2a62c9';
-  var sv = mk('button', '', '💾 ບັນທຶກສະຫຼຸບເດືອນນີ້'); sv.style.background = '#1e9e4a';
-  pr.onclick = function(){ window.print(); };
-  sv.onclick = function(){
-    if (!window.confirm('ບັນທຶກສະຫຼຸບ ' + monthLabel(month) + ' ຂອງທຸກວິຊາ ລົງ Google Sheet ຖາວອນ? (ບັນທຶກຊ້ຳເດືອນເດີມ = ແທນທີ່ເດືອນນັ້ນ ເດືອນອື່ນບໍ່ປ່ຽນ)')) return;
-    sv.disabled = true;
-    api({ api: 'reportSave', month: month }).then(function(x){
-      sv.disabled = false;
-      if (x.status === 'ok') window.alert('ບັນທຶກແລ້ວ ' + x.subjects + ' ວິຊາ · ' + x.rows + ' ແຖວ (ແທັບ "ສະຫຼຸບລາຍເດືອນ")');
-      else window.alert('ບັນທຶກບໍ່ສຳເລັດ ກະລຸນາລອງໃໝ່');
-    }).catch(function(){ sv.disabled = false; window.alert('ເຊື່ອມຕໍ່ບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'); });
-  };
-  row.appendChild(pr); row.appendChild(sv);
-  out.appendChild(row);
-}
-
-function renderAll(r){
-  var out = $('repOut');
-  out.innerHTML = '';
-  if (!r || r.status === 'badtoken'){ if (r) stopCamera('ໝົດເວລາເຂົ້າລະບົບ ກະລຸນາເຂົ້າໃໝ່'); else out.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
-  if (r.status !== 'ok'){ out.textContent = 'ໂຫຼດບໍ່ສຳເລັດ'; return; }
-  out.appendChild(mk('div', 'head', 'ທຸກວິຊາ · ' + monthLabel(r.month)));
-  if (!r.subjects.length){ out.appendChild(mk('div', '', 'ເດືອນນີ້ຍັງບໍ່ມີການສະແກນ')); return; }
-  out.appendChild(mk('div', 'sub', 'ຕົວເລກ = ຂາດ / ຂຶ້ນສອນ (ວິຊາ (L) ແລະ (T) ແຍກກັນ) · ຕົວຂຽວ = ລາທີ່ອະນຸມັດ'));
-  var wrap = mk('div', 'wrapx'), t = document.createElement('table');
-  var hr = document.createElement('tr');
-  hr.appendChild(mk('th', 'nm', 'ຊື່'));
-  r.subjects.forEach(function(s){
-    var th = mk('th', '', s.name);
-    th.appendChild(mk('small', '', 'ສອນ ' + s.held));
-    hr.appendChild(th);
-  });
-  hr.appendChild(mk('th', '', 'ລວມຂາດ'));
-  t.appendChild(hr);
-  r.rows.forEach(function(x){
-    var tr = document.createElement('tr');
-    tr.appendChild(mk('td', 'nm', x.name));
-    x.cells.forEach(function(c, i){
-      var td = mk('td', c.absent ? 'bad' : 'z', c.absent + '/' + r.subjects[i].held);
-      if (c.leave){ td.appendChild(document.createTextNode(' ')); td.appendChild(mk('small', '', '(ລາ ' + c.leave + ')')); }
-      tr.appendChild(td);
-    });
-    tr.appendChild(mk('td', 'tot' + (x.totalAbsent ? ' bad' : ' z'), String(x.totalAbsent)));
-    t.appendChild(tr);
-  });
-  wrap.appendChild(t); out.appendChild(wrap);
-  repActions(out, r.month);
-}
-
-$('repBtn').onclick = function(){
-  var box = $('repBox');
-  if (!box.classList.contains('hidden')){ box.classList.add('hidden'); return; }
-  box.classList.remove('hidden');
-  repOpen();
-};
-$('repSub').onchange = repFetch;
-$('repModeSub').onclick = function(){ setRepMode('sub'); };
-$('repModeAll').onclick = function(){ setRepMode('all'); };
-$('repMon').onchange = repFetch;
 </script>
 </body>
 </html>
